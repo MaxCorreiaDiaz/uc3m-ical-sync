@@ -1,0 +1,79 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Caddy interno: sirve el feed .ics por HTTP plano en :8080.
+# El HTTPS y el dominio los gestiona TU nginx (o Nginx Proxy Manager), que hace
+# de proxy inverso hacia este puerto. Va incluido en la imagen: no hay que montar
+# ningún fichero. Única variable: FEED_TOKEN.
+# ──────────────────────────────────────────────────────────────────────────────
+{
+	admin off
+	auto_https off
+	servers {
+		# Confiar en X-Forwarded-For del proxy (IP real del cliente en los logs)
+		trusted_proxies static private_ranges
+	}
+}
+
+# Healthcheck interno (este puerto no se publica)
+:8081 {
+	respond /healthz "ok" 200
+}
+
+:8080 {
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	# El feed vive bajo una ruta con token secreto: el horario es un dato
+	# personal. Apple/iCloud no maneja bien la autenticación HTTP en
+	# suscripciones, así que la "URL con token" es el control de acceso.
+	@feed path /{$FEED_TOKEN}/horario_uc3m.ics
+	handle @feed {
+		root * /srv/calendarios
+		rewrite * /horario_uc3m.ics
+
+		header {
+			Content-Type "text/calendar; charset=utf-8"
+			# Caché permitida pero revalidación obligatoria (ETag/Last-Modified):
+			# 304 si no cambió, fichero nuevo en cuanto cambia. Nunca se congela.
+			Cache-Control "no-cache, must-revalidate, max-age=0"
+			Content-Disposition "inline; filename=\"horario_uc3m.ics\""
+			Access-Control-Allow-Origin "*"
+		}
+		encode zstd gzip
+		file_server
+	}
+
+	# Página mínima para suscribirse con un toque desde el iPhone.
+	# {host} = el dominio que tu nginx reenvía en la cabecera Host.
+	@subscribe path /{$FEED_TOKEN} /{$FEED_TOKEN}/
+	handle @subscribe {
+		header Content-Type "text/html; charset=utf-8"
+		header Cache-Control "no-store"
+		respond `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Horario UC3M</title><body style="font-family:-apple-system,system-ui;margin:2rem">
+<h1>Horario UC3M</h1>
+<p><a href="webcal://{host}/{$FEED_TOKEN}/horario_uc3m.ics">📅 Suscribirse (webcal)</a></p>
+<p>URL HTTPS: <code>https://{host}/{$FEED_TOKEN}/horario_uc3m.ics</code></p>` 200
+	}
+
+	# Todo lo demás: 404 (no revela qué existe)
+	handle {
+		respond 404
+	}
+
+	log {
+		output stdout
+		format filter {
+			wrap console
+			fields {
+				# No dejar el token secreto en los logs
+				request>uri regexp "/[0-9a-f]{16,}" "/<token>"
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+			}
+		}
+	}
+}
