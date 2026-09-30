@@ -1,0 +1,71 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# uc3m-ical-sync — horario UC3M como calendario suscrito en Apple Calendar/iCloud
+#
+# Pensado para Dockge: pega este fichero como compose.yaml del stack y rellena
+# el .env (FEED_TOKEN, UC3M_USER, UC3M_PASS). Nada más que montar.
+#
+#   web     sirve el feed por HTTP en 127.0.0.1:8088 → tu nginx pone dominio + HTTPS
+#   worker  cada día a las 04:00: login SSO UC3M, descarga, valida y publica el .ics
+# ──────────────────────────────────────────────────────────────────────────────
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  web:
+    image: ghcr.io/maxcorreiadiaz/uc3m-ical-sync-web:latest
+    container_name: uc3m-web
+    restart: unless-stopped
+    ports:
+      # Solo accesible desde el propio servidor: tu nginx hace proxy a este puerto.
+      # (Con Nginx Proxy Manager en Docker, mira la sección "networks" de abajo.)
+      - "${WEB_BIND:-127.0.0.1:8088}:8080"
+    environment:
+      FEED_TOKEN: ${FEED_TOKEN:?Define FEED_TOKEN en el .env (openssl rand -hex 24)}
+    volumes:
+      - calendarios:/srv/calendarios:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+    read_only: true
+    tmpfs: [/tmp, /data, /config]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    logging: *logging
+    # networks: [default, npm]          # ← descomentar solo con Nginx Proxy Manager
+
+  worker:
+    image: ghcr.io/maxcorreiadiaz/uc3m-ical-sync-worker:latest
+    container_name: uc3m-worker
+    restart: unless-stopped
+    init: true                  # recoge procesos zombi de Chromium
+    env_file: .env              # credenciales y ajustes: el .env del stack
+    environment:
+      TZ: Europe/Madrid
+    volumes:
+      - calendarios:/var/www/calendarios   # feed publicado (compartido con web)
+      - datos:/data                        # estado, logs rotados, histórico, diagnóstico
+    shm_size: "1gb"             # Chromium necesita /dev/shm holgado
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    pids_limit: 512
+    logging: *logging
+
+volumes:
+  calendarios:
+  datos:
+
+# Solo si usas Nginx Proxy Manager en otro stack de Dockge: descomenta esto y la
+# línea "networks" de web, y en NPM usa como destino  uc3m-web : 8080
+# (el nombre de la red es el de tu stack de NPM; compruébalo con: docker network ls)
+# networks:
+#   npm:
+#     external: true
+#     name: nginx-proxy-manager_default

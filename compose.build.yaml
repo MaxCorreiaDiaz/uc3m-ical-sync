@@ -1,0 +1,16 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Solo para desarrollo: construir las imágenes en local en vez de descargarlas.
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+# ──────────────────────────────────────────────────────────────────────────────
+services:
+  web:
+    image: uc3m-ical-sync-web:local
+    build:
+      context: ./web
+
+  worker:
+    image: uc3m-ical-sync-worker:local
+    build:
+      context: ./worker
+      args:
+        PLAYWRIGHT_VERSION: "1.63.0"   # debe coincidir con worker/requirements.txt

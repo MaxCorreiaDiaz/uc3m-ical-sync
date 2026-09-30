@@ -1,0 +1,13 @@
+# Credenciales: NUNCA subir
+.env
+*.secret
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Diagnóstico local
+debug/
+*.zip
