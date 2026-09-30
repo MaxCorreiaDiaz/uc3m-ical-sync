@@ -99,6 +99,51 @@ jobs:
             org.opencontainers.image.title=uc3m-ical-sync-${{ matrix.image }}
             org.opencontainers.image.description=Pasarela UC3M → feed iCalendar para Apple Calendar / iCloud
 
+      # Smoke test ANTES de publicar: la imagen tiene que arrancar con las mismas
+      # restricciones que compose.yaml (sin capabilities, no-new-privileges,
+      # sistema de ficheros de solo lectura en web).
+      - name: Build local (amd64) para smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.image }}
+          platforms: linux/amd64
+          load: true
+          tags: smoke/${{ matrix.image }}:test
+          build-args: |
+            PLAYWRIGHT_VERSION=${{ steps.pw.outputs.version }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+
+      - name: Smoke test con cap_drop ALL
+        env:
+          IMAGE: smoke/${{ matrix.image }}:test
+          KIND: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          HARDEN=(--cap-drop ALL --security-opt no-new-privileges:true)
+          if [ "$KIND" = web ]; then
+            docker run -d --name smoke "${HARDEN[@]}" --read-only \
+              --tmpfs /tmp --tmpfs /data --tmpfs /config \
+              -e FEED_TOKEN=0123456789abcdef0123456789abcdef -p 18080:8080 "$IMAGE"
+            for _ in $(seq 1 20); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/nada || true)
+              [ "$code" = 404 ] && break
+              sleep 1
+            done
+            docker logs smoke
+            [ "$code" = 404 ] || { echo "Caddy no responde (HTTP $code)"; exit 1; }
+            docker exec smoke wget -qO- http://127.0.0.1:8081/healthz
+            docker rm -f smoke
+          else
+            docker run --rm "${HARDEN[@]}" --entrypoint python "$IMAGE" -c \
+              "import sync_uc3m, playwright, icalendar, apscheduler; print('imports OK')"
+            docker run --rm "${HARDEN[@]}" --shm-size 1g --entrypoint python "$IMAGE" -c \
+              "from playwright.sync_api import sync_playwright as s
+          with s() as p:
+              b = p.chromium.launch(); pg = b.new_page(); pg.set_content('<p>ok</p>')
+              print('Chromium OK', b.version, pg.inner_text('p')); b.close()"
+            docker run --rm "${HARDEN[@]}" "$IMAGE" --healthcheck
+          fi
+
       - name: Build & push
         uses: docker/build-push-action@v7
         with:
