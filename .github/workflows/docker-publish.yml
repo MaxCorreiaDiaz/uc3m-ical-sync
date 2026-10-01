@@ -32,7 +32,7 @@ concurrency:
 jobs:
   test:
     name: Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # fijo: --with-deps depende de la distro
     steps:
       - uses: actions/checkout@v7
 
@@ -56,7 +56,7 @@ jobs:
   build:
     name: Imagen ${{ matrix.image }}
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # fijo: --with-deps depende de la distro
     permissions:
       contents: read
       packages: write

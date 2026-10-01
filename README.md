@@ -68,7 +68,7 @@ fallan, se alerta y **el feed sigue sirviendo la última versión válida**.
 - Servidor Linux (amd64 o arm64) con Docker y Dockge.
 - Tu nginx ya funcionando, y un subdominio (p. ej. `calendario.tudominio.es`) con registro
   DNS apuntando al servidor.
-- ~1,5 GB de disco para la imagen del worker y 1 GB de RAM libre durante la sincronización.
+- ~1 GB de disco para las imágenes (worker ≈ 830 MB, web ≈ 110 MB) y 1 GB de RAM libre durante la sincronización.
 
 ### 1. Publicar las imágenes con GitHub Actions (una sola vez)
 
