@@ -12,5 +12,3 @@ services:
     image: uc3m-ical-sync-worker:local
     build:
       context: ./worker
-      args:
-        PLAYWRIGHT_VERSION: "1.63.0"   # debe coincidir con worker/requirements.txt
