@@ -1,0 +1,19 @@
+# Dependabot abre PRs semanales con actualizaciones. Cada PR pasa por el mismo CI
+# (tests + smoke test) antes de que decidas fusionarlo; nada se publica solo.
+version: 2
+updates:
+  - package-ecosystem: github-actions   # acciones fijadas por SHA
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: pip              # worker/requirements.txt
+    directory: /worker
+    schedule: { interval: weekly, day: monday }
+    groups:
+      python: { patterns: ["*"] }
+
+  - package-ecosystem: docker           # imágenes base
+    directories: [/worker, /web]
+    schedule: { interval: weekly, day: monday }
