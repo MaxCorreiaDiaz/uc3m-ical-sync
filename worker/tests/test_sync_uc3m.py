@@ -370,3 +370,50 @@ def test_e2e_mfa_detected(cfg, fake_uc3m, monkeypatch):
     with pytest.raises(s.MFARequiredError):
         s.fetch_ics(c)
     assert any(Path(c.debug_dir).iterdir()), "debe guardar captura de diagnóstico"
+
+
+@e2e
+def test_e2e_discover_artifacts_never_contain_password(cfg, fake_uc3m, monkeypatch):
+    """Los ficheros de diagnóstico (capturas, HTML, red, traza) no deben incluir
+    la contraseña en ningún formato (texto plano, URL-encoded, base64...)."""
+    import base64
+    import urllib.parse
+    import zipfile
+
+    c = _e2e_cfg(monkeypatch, fake_uc3m)
+    s.fetch_ics(c, discover=True)
+    pwd = c.password.encode()
+    needles = {pwd, urllib.parse.quote_plus(c.password).encode(), base64.b64encode(pwd)}
+    blobs: list[tuple[str, bytes]] = []
+    for f in Path(c.debug_dir).rglob("*"):
+        if f.is_file():
+            if f.suffix == ".zip":
+                with zipfile.ZipFile(f) as z:
+                    blobs += [(f"{f.name}:{n}", z.read(n)) for n in z.namelist()]
+            else:
+                blobs.append((str(f), f.read_bytes()))
+    assert blobs, "discover debe generar ficheros"
+    leaks = [name for name, data in blobs if any(n in data for n in needles)]
+    assert not leaks, f"contraseña filtrada en: {leaks}"
+
+
+def test_password_is_redacted_from_exception_tracebacks(cfg, capsys):
+    s.setup_logging(cfg)
+    try:
+        raise RuntimeError(f"fallo raro con {cfg.password}")
+    except RuntimeError:
+        s.log.exception("Error inesperado")
+    assert cfg.password not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "token, weak", [("abc", True), ("x" * 40, True), ("0123456789abcdef" * 3, False)]
+)
+def test_weak_feed_token_warning(cfg, capsys, monkeypatch, token, weak):
+    monkeypatch.setenv("FEED_TOKEN", token)
+    s.setup_logging(cfg)
+    s._warn_weak_feed_token()
+    out = capsys.readouterr().out
+    assert ("FEED_TOKEN débil" in out) is weak
+    if not weak:
+        assert token not in out

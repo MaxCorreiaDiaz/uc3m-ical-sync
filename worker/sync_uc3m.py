@@ -340,35 +340,33 @@ class Config:
 # --------------------------------------------------------------------------------------
 
 
-class _RedactFilter(logging.Filter):
-    """Evita que la contraseña acabe en logs aunque algún mensaje la incluya."""
+class _RedactingFormatter(logging.Formatter):
+    """Formatter que enmascara secretos en la línea YA formateada, incluidos
+    tracebacks y stack traces (un filtro sobre el mensaje no los cubre)."""
 
-    def __init__(self, secrets: Iterable[str | None]):
-        super().__init__()
-        self._secrets = [s for s in secrets if s and len(s) >= 4]
+    def __init__(self, fmt: str, datefmt: str, secrets: Iterable[str | None]):
+        super().__init__(fmt, datefmt)
+        self._secrets = sorted({s for s in secrets if s and len(s) >= 4}, key=len, reverse=True)
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        if self._secrets:
-            msg = record.getMessage()
-            for s in self._secrets:
-                msg = msg.replace(s, "***")
-            record.msg, record.args = msg, None
-        return True
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        for s in self._secrets:
+            text = text.replace(s, "***")
+        return text
 
 
 def setup_logging(cfg: Config) -> None:
-    fmt = logging.Formatter(
-        "%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S"
+    fmt = _RedactingFormatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        "%Y-%m-%d %H:%M:%S",
+        [cfg.password, cfg.telegram_token, cfg.discord_webhook, _env("FEED_TOKEN")],
     )
     root = logging.getLogger()
     root.handlers.clear()
     root.setLevel(cfg.log_level)
 
-    redact = _RedactFilter([cfg.password, cfg.telegram_token, cfg.discord_webhook])
-
     stream = logging.StreamHandler(sys.stdout)  # → docker logs
     stream.setFormatter(fmt)
-    stream.addFilter(redact)
     root.addHandler(stream)
 
     try:
@@ -380,7 +378,6 @@ def setup_logging(cfg: Config) -> None:
             encoding="utf-8",
         )
         fileh.setFormatter(fmt)
-        fileh.addFilter(redact)
         root.addHandler(fileh)
     except OSError as exc:  # p. ej. volumen de solo lectura: seguimos solo con stdout
         log.warning("No se puede escribir el log en %s: %s", cfg.log_dir, exc)
@@ -664,8 +661,9 @@ def fetch_ics(cfg: Config, *, discover: bool = False) -> Path:
         context.set_default_timeout(cfg.nav_timeout_ms)
         page = context.new_page()
         network: list[str] = []
+        tracing = False
         if discover:
-            context.tracing.start(screenshots=True, snapshots=True)
+            # Solo método, URL, estado y tipo: nunca cuerpos ni cabeceras.
             page.on(
                 "response",
                 lambda r: network.append(
@@ -685,6 +683,11 @@ def fetch_ics(cfg: Config, *, discover: bool = False) -> Path:
             _login(cfg, page, portal_host)
 
             if discover:
+                # La traza se empieza DESPUÉS del login: una traza de Playwright guarda
+                # el tráfico (incluido el POST del formulario) y los valores escritos,
+                # así que grabarla durante el login dejaría la contraseña en el .zip.
+                context.tracing.start(screenshots=True, snapshots=True)
+                tracing = True
                 out = _dump_debug(cfg, page, "discover-portal")
                 links = _discover_ics_links(cfg, page)
                 all_links = page.eval_on_selector_all(
@@ -732,11 +735,15 @@ def fetch_ics(cfg: Config, *, discover: bool = False) -> Path:
             _dump_debug(cfg, page, "playwright-error")
             raise PortalUnavailableError(f"Error del navegador: {exc}") from exc
         finally:
-            if discover:
+            if tracing:
                 trace = cfg.debug_dir / f"trace-{datetime.now():%Y%m%d-%H%M%S}.zip"
                 try:
                     context.tracing.stop(path=str(trace))
-                    log.info("Traza Playwright: %s (ábrela con `playwright show-trace`)", trace)
+                    log.info(
+                        "Traza Playwright: %s (ábrela con `playwright show-trace`). "
+                        "Contiene las cookies de la sesión UC3M: no la compartas.",
+                        trace,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("No se pudo guardar la traza: %s", exc)
             context.close()
@@ -898,7 +905,7 @@ def _fmt_dt(v: Any) -> str:
 
 def _event_key_hash(ev: Any) -> str:
     raw = f"{ev.get('SUMMARY')}|{_fmt_dt(ev.get('DTSTART'))}|{_fmt_dt(ev.get('DTEND'))}"
-    return hashlib.sha1(raw.encode()).hexdigest()[:16]
+    return hashlib.sha1(raw.encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def summarize_events(cal: Calendar) -> dict[str, str]:
@@ -1172,6 +1179,20 @@ def run_scheduler(cfg: Config, notifier: Notifier) -> None:
     sched.start()  # bloquea hasta SIGTERM
 
 
+def _warn_weak_feed_token() -> None:
+    """El token de la URL es lo único que protege el feed. Si es corto, se puede
+    adivinar; si no es hexadecimal, el filtro de logs de Caddy no lo enmascara."""
+    token = _env("FEED_TOKEN")
+    if token is None:
+        return  # el worker no lo necesita; solo lo comprueba si está en el .env
+    if len(token) < 32 or not re.fullmatch(r"[0-9a-fA-F]+", token):
+        log.warning(
+            "FEED_TOKEN débil o no hexadecimal (%d caracteres). Genera uno con "
+            "`openssl rand -hex 24` y vuelve a suscribirte con la nueva URL.",
+            len(token),
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Sincroniza el horario UC3M a un feed .ics")
     mode = parser.add_mutually_exclusive_group()
@@ -1193,6 +1214,7 @@ def main(argv: list[str] | None = None) -> int:
 
     setup_logging(cfg)
     notifier = Notifier(cfg)
+    _warn_weak_feed_token()
 
     if args.validate:
         try:
