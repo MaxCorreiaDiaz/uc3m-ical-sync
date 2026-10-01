@@ -10,7 +10,7 @@ nginx**, que es quien gestiona el dominio y el certificado.
 ```
                      stack Dockge "uc3m-calendario"
  ┌────────────────────────────────────────────────────────────────┐
- │ worker (Python + Playwright)              web (Caddy interno)  │
+ │ worker (Python + Chromium headless)       web (Caddy interno)  │
  │ 04:00 → SSO UC3M → .ics → valida ──vol──► :8080 HTTP ──────────┼─► 127.0.0.1:8088
  │         → publica si cambió                                    │          │
  └──────────────┬─────────────────────────────────────────────────┘          │

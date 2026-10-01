@@ -138,7 +138,9 @@ jobs:
             docker run --rm "${HARDEN[@]}" --entrypoint sh "$IMAGE" -c \
               'test "$(id -u):$(id -g)" = "1001:1001" && touch /data/.w /var/www/calendarios/.w && echo "uid/volúmenes OK"'
           fi
-          echo "### Tamaño de la imagen $KIND: $(docker image inspect -f '{{.Size}}' "$IMAGE" | numfmt --to=iec)" | tee -a "$GITHUB_STEP_SUMMARY"
+          SIZE=$(docker image inspect -f '{{.Size}}' "$IMAGE" | numfmt --to=iec)
+          echo "### Tamaño de la imagen $KIND (amd64): $SIZE" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Imagen ${KIND}::${SIZE} (amd64, sin comprimir)"
 
       - name: Build & push
         uses: docker/build-push-action@v7
