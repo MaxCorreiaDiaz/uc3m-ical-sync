@@ -45,7 +45,7 @@ jobs:
       - name: Instalar dependencias
         run: |
           pip install -r worker/requirements.txt pytest
-          python -m playwright install --with-deps chromium
+          python -m playwright install --with-deps --only-shell chromium   # igual que la imagen
 
       - name: pytest (incluye e2e con Chromium contra SSO simulado)
         working-directory: worker
@@ -66,12 +66,6 @@ jobs:
         image: [worker, web]
     steps:
       - uses: actions/checkout@v7
-
-      # La versión de la imagen base de Playwright se deriva de requirements.txt:
-      # imposible que se desincronicen.
-      - name: Versión de Playwright
-        id: pw
-        run: echo "version=$(grep -Po '^playwright==\K[0-9.]+' worker/requirements.txt)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
@@ -109,8 +103,6 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: smoke/${{ matrix.image }}:test
-          build-args: |
-            PLAYWRIGHT_VERSION=${{ steps.pw.outputs.version }}
           cache-from: type=gha,scope=${{ matrix.image }}
 
       - name: Smoke test con cap_drop ALL
@@ -142,7 +134,11 @@ jobs:
               b = p.chromium.launch(); pg = b.new_page(); pg.set_content('<p>ok</p>')
               print('Chromium OK', b.version, pg.inner_text('p')); b.close()"
             docker run --rm "${HARDEN[@]}" "$IMAGE" --healthcheck
+            # UID 1001 (compatibilidad con volúmenes existentes) y volúmenes escribibles
+            docker run --rm "${HARDEN[@]}" --entrypoint sh "$IMAGE" -c \
+              'test "$(id -u):$(id -g)" = "1001:1001" && touch /data/.w /var/www/calendarios/.w && echo "uid/volúmenes OK"'
           fi
+          echo "### Tamaño de la imagen $KIND: $(docker image inspect -f '{{.Size}}' "$IMAGE" | numfmt --to=iec)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Build & push
         uses: docker/build-push-action@v7
@@ -151,8 +147,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           pull: true
           push: ${{ github.event_name != 'pull_request' }}
-          build-args: |
-            PLAYWRIGHT_VERSION=${{ steps.pw.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}

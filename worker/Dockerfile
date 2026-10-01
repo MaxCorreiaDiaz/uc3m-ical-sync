@@ -2,13 +2,15 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Worker de sincronización UC3M → iCalendar
 #
-# Base oficial de Microsoft: trae Python 3, Playwright y los navegadores con
-# TODAS sus dependencias de sistema (fuentes, libnss3, libgbm...). La versión de
-# la imagen DEBE coincidir con la de `playwright` en requirements.txt; el workflow
-# de GitHub Actions la lee de ahí y la pasa como build-arg automáticamente.
+# Base ligera (Debian slim) + SOLO el "headless shell" de Chromium con sus
+# dependencias de sistema. Es exactamente lo que usa el worker (siempre corre
+# sin ventana) y evita los ~1,5 GB de la imagen oficial de Playwright, que trae
+# Chromium, Firefox y WebKit completos.
+#
+# La versión de Playwright sale de requirements.txt (pip), así que el navegador
+# instalado siempre coincide con la librería.
 # ──────────────────────────────────────────────────────────────────────────────
-ARG PLAYWRIGHT_VERSION=1.63.0
-FROM mcr.microsoft.com/playwright/python:v${PLAYWRIGHT_VERSION}-noble
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -20,25 +22,27 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --break-system-packages -r requirements.txt \
- # La imagen ya incluye Chromium; esto solo verifica que la versión casa
- # (no descarga nada si ya está) y falla el build si no.
- && python -m playwright install chromium \
+RUN pip install -r requirements.txt \
+ # Solo chromium-headless-shell + librerías del sistema que necesita
+ && python -m playwright install --with-deps --only-shell chromium \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /root/.cache /tmp/* \
  && python -c "import playwright, icalendar, apscheduler; print('deps OK')"
 
 COPY sync_uc3m.py .
 
-# Directorios de los volúmenes, propiedad del usuario sin privilegios `pwuser`
-# (incluido en la imagen). Los volúmenes con nombre heredan este propietario.
-RUN mkdir -p /var/www/calendarios /data/logs /data/debug /data/archive \
- && chown -R pwuser:pwuser /var/www/calendarios /data /app
+# Usuario sin privilegios. UID/GID 1001 = el mismo que tenía `pwuser` en la
+# imagen anterior, para que los volúmenes ya creados sigan siendo escribibles.
+RUN groupadd --gid 1001 app \
+ && useradd --uid 1001 --gid 1001 --no-create-home --shell /usr/sbin/nologin app \
+ && mkdir -p /var/www/calendarios /data/logs /data/debug /data/archive \
+ && chown -R app:app /var/www/calendarios /data
 
-USER pwuser
+USER app
 
 # Sano = hubo una sincronización correcta en las últimas STALE_HOURS horas.
 HEALTHCHECK --interval=15m --timeout=20s --start-period=10m --retries=2 \
   CMD ["python", "/app/sync_uc3m.py", "--healthcheck"]
 
 ENTRYPOINT ["python", "/app/sync_uc3m.py"]
-# Sin argumentos = planificador residente. `docker compose run --rm worker --once`
+# Sin argumentos = planificador residente.  Una ejecución: `... --once`
 CMD []
