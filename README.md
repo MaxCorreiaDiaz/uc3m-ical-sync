@@ -183,6 +183,20 @@ antes de la sincronización):
 Para no recibir cambios sin revisarlos, sustituye `:latest` por una versión (`:1.0`) en
 `compose.yaml`.
 
+### 7. Alertas por Telegram (opcional)
+
+1. En Telegram, abre **@BotFather** → `/newbot` → ponle un nombre y un usuario que
+   termine en `bot`. Te devuelve el **token** (`123456789:AAH…`).
+2. Abre el chat de tu bot nuevo y pulsa **Iniciar** (un bot no puede escribirte primero).
+3. Tu **chat id**: escribe a **@userinfobot** y te responde con tu `Id`. Alternativa: tras el
+   paso 2, abre `https://api.telegram.org/bot<TOKEN>/getUpdates` y busca `"chat":{"id":…}`.
+4. En el `.env` del stack: `TELEGRAM_BOT_TOKEN=…` y `TELEGRAM_CHAT_ID=…` → *Save* → *Deploy*.
+5. Prueba: `docker exec uc3m-worker python /app/sync_uc3m.py --test-alert`.
+
+Recibirás avisos cuando falle la sincronización (con el motivo y qué hacer), cuando se
+recupere, y cuando cambie tu horario (clases nuevas, movidas o canceladas, con aula y hora).
+El token del bot es un secreto: no lo pegues fuera del `.env`.
+
 ---
 
 ## Suscripción en Apple Calendar vinculada a iCloud
@@ -230,10 +244,10 @@ forzarlo en el Mac: **Visualización → Actualizar calendarios** (⌘R).
 | Ver logs | Dockge → stack → logs, o `docker logs -f uc3m-worker` |
 | Estado (último éxito, errores, nº eventos) | `docker exec uc3m-worker cat /data/state.json` |
 | Forzar sincronización ahora | `docker exec uc3m-worker python /app/sync_uc3m.py --once` |
-| Cambiaste la contraseña UC3M | edita `UC3M_PASS` en el `.env` de Dockge → *Save* → *Restart* |
-| Nuevo cuatrimestre | actualiza `UC3M_ICS_URL` en el `.env` → *Save* → *Restart* |
+| Cambiaste la contraseña UC3M | edita `UC3M_PASS` en el `.env` de Dockge → *Save* → *Deploy* (Restart no relee el `.env`) |
+| Nuevo cuatrimestre | actualiza `UC3M_ICS_URL` en el `.env` → *Save* → *Deploy* (Restart no relee el `.env`) |
 | Horario legítimamente mucho más corto | `docker exec -e ALLOW_SHRINK=true uc3m-worker python /app/sync_uc3m.py --once` |
-| Rotar la URL secreta | nuevo `FEED_TOKEN` en el `.env` → *Restart* → vuelve a suscribirte |
+| Rotar la URL secreta | nuevo `FEED_TOKEN` en el `.env` → *Save* → *Deploy* → vuelve a suscribirte |
 | Actualizar a la última versión | Dockge → *Update* |
 | Volver a una versión anterior | en `compose.yaml` cambia `:latest` por `:sha-<commit>` o `:1.0.2` → *Deploy* |
 | Cambiar el código | push a `main` → check verde en *Actions* → Dockge *Update* |
